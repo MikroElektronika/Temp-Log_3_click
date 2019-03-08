@@ -1,0 +1,136 @@
+'
+'Example for Temp_Log_3 Click
+'
+'    Date          : Dec 2018.
+'    Author        : Nemanja Medakovic
+'
+'Test configuration PIC :
+'    
+'    MCU             : P18F87K22
+'    Dev. Board      : EasyPIC PRO v7
+'    PIC Compiler ver : v7.2.0.0
+'
+'---
+'
+'Description :
+'
+'The application is composed of three sections :
+'
+'- System Initialization - Initializes peripherals and pins.
+'- Application Initialization - Initializes I2C interface and performs a device configuration for properly working.
+'  Also sets the temperature limit to the desired values.
+'- Application Task - (code snippet) - First ensures that the minimum conversion time is met, and then reads the
+'  ambient temperature calculated to the Celsius degrees.
+'  Also checks the limit status and shows a message when some limit condition is met.
+'Note : The temperature range that can be measured or written is from -40 to +125 Celsius degrees.
+'The user can change the measured temperature resolution, but the range remains the same.
+'The limit temperature resolution is always a 10bit, or 0.25 Celsius degrees.
+'If user wants to enable the EEPROM Write Protection, the A0 pin on the device must be set to the high voltage level.
+'
+'Additional Functions :
+'
+'- floatCut - Makes that float values be rounded on two decimal places.
+'- logUnit - Writes a Celsius degrees symbol on uart terminal.
+'- checkLimitStatus - Checks the limit status for each temperature reading cycle and writes a message on uart terminal
+'  when some limit condition is met.
+'
+'
+program Click_Temp_Log_3_PIC
+
+include Click_Temp_Log_3_types
+include Click_Temp_Log_3_config
+dim
+    retStatus as T_TEMPLOG3_RETVAL 
+    temperature as T_TEMPLOG3_DEG 
+    text as char[50] 
+    
+sub procedure floatCut() 
+dim
+    count as uint8_t 
+    conCnt as uint8_t 
+    conVar as uint8_t 
+    conCnt = 0
+    conVar = 0
+
+    for count = 0 to 50 - 1 
+        if (text[count] = ".") then 
+            conVar = 1 
+        end if
+        if (conVar = 1) then 
+            inc(conCnt)
+        end if
+        if (conCnt > 3) then 
+            if ((text[count] = "e") or (conVar = 2)) then 
+                text[count - (conCnt - 4)] = text[count] 
+                text[count] = 0 
+                conVar = 2 
+            else 
+                text[count] = 0 
+            end if
+        end if
+    next count
+end sub
+
+sub procedure logUnit() 
+    text[0] = " " 
+    text[1] = 176 
+    text[2] = "C" 
+    text[3] = 0 
+    mikrobus_logWrite(text, _LOG_TEXT) 
+end sub
+
+sub procedure checkLimitStatus() 
+    if ((retStatus and _TEMPLOG3_TCRIT_DETECT) <> _TEMPLOG3_OK) then 
+        mikrobus_logWrite("**  Critical temperature detection!  **", _LOG_LINE) 
+    end if
+    if ((retStatus and _TEMPLOG3_TUPPER_DETECT) <> _TEMPLOG3_OK) then 
+        mikrobus_logWrite("**  Ambient temperature is higher than upper limit temperature!  **", _LOG_LINE) 
+    else 
+        if ((retStatus and _TEMPLOG3_TLOWER_DETECT) <> _TEMPLOG3_OK) then 
+            mikrobus_logWrite("**  Ambient temperature is lower than lower limit temperature!  **", _LOG_LINE) 
+        end if
+    end if
+end sub
+
+sub procedure systemInit() 
+    mikrobus_gpioInit(_MIKROBUS1, _MIKROBUS_INT_PIN, _GPIO_INPUT) 
+    mikrobus_i2cInit(_MIKROBUS1, @_TEMPLOG3_I2C_CFG[0]) 
+    mikrobus_logInit(_LOG_USBUART, 9600) 
+    mikrobus_logWrite("*** Initializing... ***", _LOG_LINE) 
+    Delay_ms(100) 
+end sub
+
+sub procedure applicationInit() 
+    templog3_i2cDriverInit(T_TEMPLOG3_P(@_MIKROBUS1_GPIO), T_TEMPLOG3_P(@_MIKROBUS1_I2C), _TEMPLOG3_SLAVE_ADDR_A0_L) 
+    Delay_ms(500) 
+    templog3_writeReg(_TEMPLOG3_CONFIG_REG, ((((_TEMPLOG3_TLIMIT_HYST_0_DEG or _TEMPLOG3_CONT_CONV_MODE) or _TEMPLOG3_EVENT_OUTPUT_EN) or _TEMPLOG3_EVENT_TCRIT_ONLY) or _TEMPLOG3_EVENT_POL_ACT_HIGH) or _TEMPLOG3_EVENT_COMPARATOR_MODE) 
+    templog3_writeReg(_TEMPLOG3_RESOLUTION_REG, _TEMPLOG3_11BIT_RESOLUTION) 
+    templog3_setTemp(_TEMPLOG3_TEMP_CRITICAL_REG, 26.5) 
+    templog3_setTemp(_TEMPLOG3_TEMP_UPPER_REG, 30) 
+    templog3_setTemp(_TEMPLOG3_TEMP_LOWER_REG, -5) 
+    Delay_ms(200) 
+    mikrobus_logWrite("** Temp-Log 3 is initialized **", _LOG_LINE) 
+    mikrobus_logWrite("", _LOG_LINE) 
+end sub
+
+sub procedure applicationTask() 
+    templog3_waitConvDone() 
+    retStatus = templog3_getTemp(_TEMPLOG3_TEMP_AMBIENT_REG, @temperature) 
+    FloatToStr(temperature, text) 
+    floatCut() 
+    mikrobus_logWrite("**  Ambient temperature is : ", _LOG_TEXT) 
+    mikrobus_logWrite(text, _LOG_TEXT) 
+    logUnit() 
+    mikrobus_logWrite("  **", _LOG_LINE) 
+    checkLimitStatus() 
+    Delay_ms(300) 
+end sub
+
+main :
+
+    systemInit() 
+    applicationInit() 
+    while (1) 
+        applicationTask() 
+    wend
+end.
